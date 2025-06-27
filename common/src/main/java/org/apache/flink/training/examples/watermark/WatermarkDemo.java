@@ -1,4 +1,4 @@
-package org.apache.flink.training.examples.ridecount;
+package org.apache.flink.training.examples.watermark;
 
 import org.apache.flink.api.common.RuntimeExecutionMode;
 import org.apache.flink.api.common.functions.MapFunction;
