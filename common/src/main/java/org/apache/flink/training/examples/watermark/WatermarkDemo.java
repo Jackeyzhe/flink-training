@@ -1,6 +1,11 @@
 package org.apache.flink.training.examples.watermark;
 
 import org.apache.flink.api.common.RuntimeExecutionMode;
+import org.apache.flink.api.common.eventtime.Watermark;
+import org.apache.flink.api.common.eventtime.WatermarkGenerator;
+import org.apache.flink.api.common.eventtime.WatermarkGeneratorSupplier;
+import org.apache.flink.api.common.eventtime.WatermarkOutput;
+import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.api.common.functions.MapFunction;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
@@ -8,7 +13,6 @@ import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.functions.AssignerWithPeriodicWatermarks;
 import org.apache.flink.streaming.api.functions.ProcessFunction;
 import org.apache.flink.streaming.api.functions.windowing.ProcessWindowFunction;
-import org.apache.flink.streaming.api.watermark.Watermark;
 import org.apache.flink.streaming.api.windowing.assigners.TumblingEventTimeWindows;
 import org.apache.flink.streaming.api.windowing.time.Time;
 import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
@@ -32,11 +36,13 @@ public class WatermarkDemo {
 
         DataStream<Event> source = env.socketTextStream("localhost", 9999).map(new EventMapFunction());
         env.setRuntimeMode(RuntimeExecutionMode.STREAMING);
+
         env.setParallelism(1);
 
         SingleOutputStreamOperator<Event> withTimestampsAndWatermarks = source
                 .assignTimestampsAndWatermarks(
-                        new CustomWatermarkAssigner()
+                        WatermarkStrategy.forGenerator(ctx -> new CustomWatermarkGenerator())
+                                .withTimestampAssigner(((event, l) -> event.timestamp))
                 );
 
         OutputTag<Event> lateTag = new OutputTag<Event>("late-tag") {
@@ -89,14 +95,14 @@ public class WatermarkDemo {
         env.execute("Event Time Window Example");
     }
 
-    private static class CustomWatermarkAssigner implements AssignerWithPeriodicWatermarks<Event> {
+    private static class CustomWatermarkGenerator implements WatermarkGenerator<Event> {
 
         private static final AtomicLong currentMaxTime = new AtomicLong(0L);
         private static final long timeDiff = 4000L;
         private static final SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
 
         @Override
-        public long extractTimestamp(Event event, long l) {
+        public void onEvent(Event event, long l, WatermarkOutput watermarkOutput) {
             long eventTime = event.timestamp;
             // 使用CAS确保线程安全
             while (true) {
@@ -109,14 +115,11 @@ public class WatermarkDemo {
                     ", CurrentMaxTime: " + currentMaxTime.get() +
                     ", Watermark: " + (currentMaxTime.get() - timeDiff) +
                     " | " + sdf.format(currentMaxTime.get() - timeDiff));
-
-            return eventTime;
         }
 
-        @Nullable
         @Override
-        public Watermark getCurrentWatermark() {
-            return new Watermark(currentMaxTime.get() - timeDiff);
+        public void onPeriodicEmit(WatermarkOutput watermarkOutput) {
+            watermarkOutput.emitWatermark(new Watermark(currentMaxTime.get() - timeDiff));
         }
     }
 }
